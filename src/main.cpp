@@ -1,8 +1,10 @@
 #include "ollama.hpp"
 #include "json.hpp"
 #include "utils.hpp"
+#include "logger.hpp"
 
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <getopt.h>
 
@@ -26,6 +28,7 @@ void printusage(const std::string &name) {
 	std::cout << "  -h, --help		show this help message" << std::endl;
 	std::cout << "  -v, --version   	show program version" << std::endl;
 	std::cout << "  -d, --debug true/false  enable debug statements" << std::endl;
+	std::cout << "  -l, --logger on/off     turn on/off the logger" << std::endl;
 	std::cout << "  -s, --server SERVER     set the server address" << std::endl;
 	std::cout << "  -p, --port PORT      	set the port number" << std::endl;
 	std::cout << "  -m, --model MODEL     	set the model to use" << std::endl;
@@ -45,6 +48,7 @@ void intro() {
 
 int main (int argc, char* argv[]) {
 	bool debug = false;
+	std::string log = "off";
 	std::string server = DEFAULT_SERVER;
 	std::string port = DEFAULT_PORT;
 	std::string url = DEFAULT_SERVER_URL;
@@ -55,6 +59,7 @@ int main (int argc, char* argv[]) {
 	    {"help", 	no_argument,       nullptr, 'h'},	
 	    {"version", no_argument,       nullptr, 'v'},	
 	    {"debug",   required_argument, nullptr, 'd'},	
+	    {"logger",  required_argument, nullptr, 'l'},	
 	    {"server",  required_argument, nullptr, 's'},	
 	    {"port",    required_argument, nullptr, 'p'},	
 	    {"model",   required_argument, nullptr, 'm'},	
@@ -76,6 +81,10 @@ int main (int argc, char* argv[]) {
 				debug = optarg;
 				break;
 
+			case 'l':
+				log = optarg;
+				break;
+
 			case 's':
 				server = optarg;
 				break;
@@ -94,7 +103,9 @@ int main (int argc, char* argv[]) {
 		} // switch
 	}// while
 
-	
+	const std::string log_file = AI + get_timestamp() + ".log";
+	if(to_lowercase(log) == "on") logger::get_instance().init(log_file);
+
 	if ( (!server.empty()) || (!port.empty()) ) url = "http://" + server + ":" + port;
 	if (debug == true) {
 		if(!url.empty()) std::cout << PROMPT_DEBUG << "Connecting to the server at " << url << std::endl; 
@@ -129,32 +140,45 @@ int main (int argc, char* argv[]) {
 
 	std::string input;
 	std::string response;
+	std::string timespent;
     	while (running) {
-        	std::cout << PROMPT;
+		if(to_lowercase(log) == "on") logger::get_instance().log(get_timestamp() + " ");
+		std::cout << PROMPT;
         	std::getline(std::cin, input);
-
+		if(to_lowercase(log) == "on") logger::get_instance().log(input+"\n");
+		
 		if (input.empty()) response = "Ask me something.";
-		else if (myserver.is_running() == false) response = "Server is not running. Please start the server.";
-        	else if (to_lowercase(input) == STR_EXIT || to_lowercase(input) == STR_QUIT)  {
+        	else if ( (input.length() == STR_EXIT.length()) && (to_lowercase(input) == STR_EXIT || to_lowercase(input) == STR_QUIT) )  {
             		running = false;
             		response = "Thank you for using me. I am Signing off.";
-        	} else {
+        	}
+		else if (myserver.is_running() == false) response = "Server is not running. Please start the server.";
+		else {
             		// std::cout << PROMPT << "Give me a moment..." << std::endl;
+			
 			bool stop = false;
-			std::thread spinner(display_spinner, std::ref(stop));
+			std::thread progress(display_spinner, std::ref(stop));
 			try {
+				auto start_time = get_time_now();
 				response = myserver.generate(model, input);
+				auto end_time = get_time_now();
+				timespent = get_time_diff(start_time, end_time);
 			}
 			catch (ollama::exception e) { 
 				if (debug == true) std::cout << PROMPT_DEBUG << "Exception occured. The message is the following." << std::endl;
 				response = e.what();
 			}
 			stop = true;
-			spinner.join();
+			progress.join();
+			std::cout<< std::endl;
         	}
 		// response to the user
+		logger::get_instance().log(get_timestamp() + " " + timespent + " ");
                 std::cout << PROMPT << response << std::endl;
+		timespent = "";
     	} // while
+
+	if(to_lowercase(log) == "on") logger::get_instance().restore();
 
 	return 0;
 } // main
